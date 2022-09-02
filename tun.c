@@ -103,7 +103,6 @@ main(int argc, char *argv[])
 			    ntohs(ip->ip_len));
 		}
 
-		printf("write size: %zu\n\n", size);
 		if (write(ofd, &packet, size) != size)
 			err(EXIT_FAILURE, "%s", otun);
 	}
