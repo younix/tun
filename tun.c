@@ -1,17 +1,52 @@
 #include <sys/types.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
 
 #include <netinet/in.h>
 #include <netinet/ip.h>
-#include <arpa/inet.h>
+#include <netinet/ip6.h>
+#include <netinet/tcp.h>
+#include <netinet/udp.h>
 
 #include <err.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 
 #define MTU 1500
+
+struct packet {
+	int family;
+	char buf[MTU];
+};
+
+bool
+print(struct packet *p, struct ip *ip4, struct ip6_hdr *ip6, struct tcphdr *tcp,
+    struct udphdr *udp)
+{
+	int sport = 0;
+	int dport = 0;
+
+	if (tcp) {
+		sport = tcp->th_sport;
+		dport = tcp->th_dport;
+	}
+
+	if (udp) {
+		sport = udp->uh_sport;
+		dport = udp->uh_dport;
+	}
+
+	if (ip4) {
+		printf("%s:%u -> %s:%u\n", inet_ntoa(ip4->ip_src), sport,
+		    inet_ntoa(ip4->ip_dst), dport);
+	}
+
+	return true;
+}
 
 void
 usage(void)
@@ -22,10 +57,12 @@ usage(void)
 int
 main(int argc, char *argv[])
 {
-	int		ch, verbose = 0;;
+	int		ch;
+	int		verbose = 0;
 	struct pollfd	fds[2];
+	bool		forward = true;
 
-	while ((ch = getopt(argc, argv, "h")) != -1) {
+	while ((ch = getopt(argc, argv, "vh")) != -1) {
 		switch (ch) {
 		case 'v':
 			verbose++;
@@ -83,27 +120,35 @@ main(int argc, char *argv[])
 			otun = tun0;
 		}
 
-		struct {
-			int family;
-			char buf[MTU];
-		} packet;
+		struct packet packet;
 
 		ssize_t size = read(ifd, &packet, sizeof packet);
 		if (size == -1)
 			errx(EXIT_FAILURE, "%s", itun);
 
-		struct ip *ip = (struct ip *)packet.buf;
+		struct ip	*ip4 = NULL;
+		struct ip6_hdr	*ip6 = NULL;
+		struct tcphdr	*tcp = NULL;
+		struct udphdr	*udp = NULL;
 
-		if (verbose) {
-			printf("%s: size: %zu family: %u", itun, size,
-			    ntohl(packet.family));
-			printf(" ver: %u hlen: %u tlen: %u\n",
-			    ip->ip_v,
-			    ip->ip_hl << 2,
-			    ntohs(ip->ip_len));
+		if (ntohl(packet.family) == AF_INET) {
+			ip4 = (struct ip *)packet.buf;
+			if (ip4->ip_p == IPPROTO_TCP)
+				tcp = (struct tcphdr *)(packet.buf + (ip4->ip_hl << 2));
+			if (ip4->ip_p == IPPROTO_UDP)
+				udp = (struct udphdr *)(packet.buf + (ip4->ip_hl << 2));
+		} else if (ntohl(packet.family) == AF_INET6) {
+			ip6 = (struct ip6_hdr *)packet.buf;
+			if (ip6->ip6_nxt == IPPROTO_TCP)
+				tcp = (struct tcphdr *)(packet.buf + sizeof(*ip6));
+			if (ip6->ip6_nxt == IPPROTO_UDP)
+				udp = (struct udphdr *)(packet.buf + sizeof(*ip6));
 		}
 
-		if (write(ofd, &packet, size) != size)
+		if (verbose)
+			forward = print(&packet, ip4, ip6, tcp, udp);
+
+		if (forward && write(ofd, &packet, size) != size)
 			err(EXIT_FAILURE, "%s", otun);
 	}
 
