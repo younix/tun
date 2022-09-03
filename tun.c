@@ -23,9 +23,14 @@ struct packet {
 	char buf[MTU];
 };
 
+int	 ifd;
+int	 ofd;
+char	*itun;
+char	*otun;
+
 bool
-print(struct packet *p, struct ip *ip4, struct ip6_hdr *ip6, struct tcphdr *tcp,
-    struct udphdr *udp)
+print(struct packet *p, size_t *size, struct ip *ip4, struct ip6_hdr *ip6,
+    struct tcphdr *tcp, struct udphdr *udp)
 {
 	int sport = 0;
 	int dport = 0;
@@ -46,6 +51,12 @@ print(struct packet *p, struct ip *ip4, struct ip6_hdr *ip6, struct tcphdr *tcp,
 	}
 
 	return true;
+}
+
+void
+forwarding(struct packet *packet, size_t size) {
+	if (write(ofd, packet, size) != size)
+		err(EXIT_FAILURE, "%s", otun);
 }
 
 void
@@ -89,10 +100,8 @@ main(int argc, char *argv[])
 	fds[0].events = fds[1].events = POLLIN;
 
 	for (;;) {
-		int	 ifd = -1;
-		int	 ofd = -1;
-		char	*itun = NULL;
-		char	*otun = NULL;
+		ifd = ofd = -1;
+		itun = otun = NULL;
 
 		int nready = poll(fds, 2, INFTIM);
 		if (nready == -1)
@@ -146,10 +155,10 @@ main(int argc, char *argv[])
 		}
 
 		if (verbose)
-			forward = print(&packet, ip4, ip6, tcp, udp);
+			forward = print(&packet, &size, ip4, ip6, tcp, udp);
 
-		if (forward && write(ofd, &packet, size) != size)
-			err(EXIT_FAILURE, "%s", otun);
+		if (forward)
+			forwarding(&packet, size);
 	}
 
 	if (close(fds[0].fd) == -1)
