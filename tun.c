@@ -17,6 +17,9 @@
 #include <unistd.h>
 
 #define MTU 1500
+#ifndef INFTIM
+#define INFTIM	(-1)
+#endif
 
 struct packet {
 	int family;
